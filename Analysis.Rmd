@@ -1,0 +1,102 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+summarize to centroid (oposite to dispatch, but same idea, single points for values)
+summarize to csquares at 0.01 by haul and metier
+Calculate total kw hour and value for CRU and non CRU, only active gears
+download text file with csquare codes and coordinates
+use ggplot approach
+
+## Libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(sp)
+library(rgeos)
+```
+
+## Summary by haul
+```{r}
+sumeff <- effort %>%
+  group_by(FT_REF) %>%
+  dplyr::summarise(
+    AKTIVITET_KODE = min(AKTIVITET_KODE),
+    AKTIVITET = min(AKTIVITET),
+    FANGSTÅR = min(FANGSTÅR),
+    SONE = min(SONE),
+    KVOTETYPE_KODE = min(KVOTETYPE_KODE),
+    KVOTETYPE = min(KVOTETYPE),
+    REDSKAP_FAO = min(REDSKAP_FAO),
+    REDSKAP_NS = min(REDSKAP_NS),
+    REDSKAP = min(REDSKAP),
+    REDSKAPSSPESIFIKASJON_KODE = min(REDSKAPSSPESIFIKASJON_KODE),
+    REDSKAPSSPESIFIKASJON = min(REDSKAPSSPESIFIKASJON),
+    MASKEVIDDE = min(MASKEVIDDE),
+    REDSKAP_PROBLEMER_KODE = min(REDSKAP_PROBLEMER_KODE),
+    REDSKAP_PROBLEMER = min(REDSKAP_PROBLEMER),
+    MidDateTime = min(as.POSIXct(effort$STARTTIDSPUNKT))+
+      minutes(round(min(effort$VARIGHET)/2, digits=0)),
+    VARIGHET = min(VARIGHET),
+    MeanDepth = mean(min(HAV_DYBDE_START),min(HAV_DYBDE_STOPP)),
+    TREKK_AVSTAND_METER = min(TREKK_AVSTAND_METER),
+    VE_REF = min(VE_REF),
+    VE_LEN = min(VE_LEN),
+    VE_KW = min(VE_KW),
+    VE_TON = min(VE_TON),
+    FT_REF = min(FT_REF),
+    FT_LDAT = min(FT_LDAT),
+    LE_CDAT = min(LE_CDAT),
+    LE_GEAR = min(LE_GEAR),
+    LE_MSZ = min(LE_MSZ),
+    LE_RECT = min(LE_RECT),
+    LE_MET = min(LE_MET),
+    gear = min(gear),
+    area = min(area),
+    gear_FR = min(gear_FR),
+    mesh = min(mesh),
+    registered_target_assemblage = min(registered_target_assemblage),
+    target_species = min(target_species),
+    species_group = min(species_group),
+    dws_group = min(dws_group),
+    gear_group = min(gear_group),
+    gear_level6 = min(gear_level6),
+    MESHSIZE = min(MESHSIZE),
+    MESHCAT = min(MESHCAT),
+    RUNDVEKT = sum(RUNDVEKT1),
+    value = sum(value),
+    value_euro = sum(value_euro)
+  )
+```
+
+## Convert to lines and calculate length and centroid
+```{r}
+begin.coord <- effort %>% group_by(FT_REF) %>% dplyr::summarise(minlon = min(START_LG), minlat = min(START_LT)) %>%
+  select(-1)
+end.coord <- effort %>% group_by(FT_REF) %>% dplyr::summarise(minlon = min(STOPP_LG), minlat = min(STOPP_LT)) %>%
+  select(-1)
+
+l <- vector("list", nrow(begin.coord))
+for (i in seq_along(l)) {
+  l[[i]] <- Lines(list(Line(rbind(begin.coord[i, ], end.coord[i,]))), as.character(i))
+}
+
+l<- l %>% SpatialLines %>% mutate(FT_REF = pull(dplyr::summarise(group_by(effort, FT_REF)))) %>%
+      proj4string(.,"+init=epsg:4326")
+
+# to project to utm
+#l <- spTransform(l, "+init=esri:32633")
+
+l@data = data.frame(l@data, sumeff[match(l@data[,"FT_REF"], sumeff[,"FT_REF"]),])
+
+#gLength(l, byid=TRUE))
+#gCentroid(l, byid=TRUE))
+
+```
+```{r}
+min(as.POSIXct(effort$STARTTIDSPUNKT[8:9]))+
+minutes(round(min(effort$VARIGHET[8:9])/2, digits=0))
+```
+
