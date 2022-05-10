@@ -94,8 +94,5 @@ l@data = data.frame(l@data, sumeff[match(l@data[,"FT_REF"], sumeff[,"FT_REF"]),]
 #gCentroid(l, byid=TRUE))
 
 ```
-```{r}
-min(as.POSIXct(effort$STARTTIDSPUNKT[8:9]))+
-minutes(round(min(effort$VARIGHET[8:9])/2, digits=0))
-```
+
 
