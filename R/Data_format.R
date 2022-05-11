@@ -38,7 +38,7 @@ write.csv(Catch, file="output/Catch.csv")
 
 ## Now generating the effort file
 Effort <- effort %>% filter(Country == "NO") %>% 
-  group_by(Species, Year, Quarter, IntercatchMetierTag, VesselLenthCategory, Area) %>%
+  group_by(Year, Quarter, IntercatchMetierTag, VesselLenthCategory, Area) %>%
   dplyr::summarise(
     KWdays = sum(KWdays),
     DaysatSea = sum(duration),
