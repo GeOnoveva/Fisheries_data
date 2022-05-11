@@ -14,6 +14,8 @@ effort <- effort %>% mutate(Date = as.Date(STARTTIDSPUNKT),
                             VesselLenthCategory = cut(STØRSTE_LENGDE, c(10, 24, 40)),
                             IntercatchMetierTag = metier_level_6,
                             Area = area)
+effort$VesselLenthCategory = ifelse(effort$VesselLenthCategory=="(10,24]", "10<24m", 
+                                    ifelse(effort$VesselLenthCategory=="(24,40]", "24<40m", effort$VesselLenthCategory))
 
 effort <- effort %>% mutate(duration = as.numeric((strptime(STOPPTIDSPUNKT, format= "%Y-%m-%d %H:%M:%S") - strptime(STARTTIDSPUNKT, format= "%Y-%m-%d %H:%M:%S"))/86400))
 effort <- effort %>% mutate(KWdays = duration * MOTORKRAFT * 0.735499)  # this is converting horse power to kilowatt
@@ -30,7 +32,7 @@ Catch <- effort %>% filter(Country == "NO") %>%
 
 Catch$FDFVessel<- NA
 Catch$Discards<- NA
-Catch$Country<- "Norway"
+Catch$Country<- "NO"
 Catch$ID<- 1:nrow(Catch)
 
 write.csv(Catch, file="output/Catch.csv")
@@ -45,7 +47,7 @@ Effort <- effort %>% filter(Country == "NO") %>%
     NoVessels = length(unique(REGM))
   )
 Effort$FDFVessel<- NA
-Effort$Country<- "Norway"
+Effort$Country<- "NO"
 Effort$ID<- 1:nrow(Effort)
 write.csv(Effort, file="output/Effort.csv")
 
