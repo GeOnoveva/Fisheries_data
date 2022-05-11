@@ -30,6 +30,8 @@ Catch <- effort %>% filter(Country == "NO") %>%
 
 Catch$FDFVessel<- NA
 Catch$Discards<- NA
+Catch$Country<- "Norway"
+Catch$ID<- 1:nrow(Catch)
 
 write.csv(Catch, file="output/Catch.csv")
 
@@ -43,5 +45,7 @@ Effort <- effort %>% filter(Country == "NO") %>%
     NoVessels = unique(REGM)
   )
 Effort$FDFVessel<- NA
+Effort$Country<- "Norway"
+Effort$ID<- 1:nrow(Effort)
 write.csv(Effort, file="output/Effort.csv")
 
