@@ -42,7 +42,7 @@ Effort <- effort %>% filter(Country == "NO") %>%
   dplyr::summarise(
     KWdays = sum(KWdays),
     DaysatSea = sum(duration),
-    NoVessels = unique(REGM)
+    NoVessels = length(unique(REGM))
   )
 Effort$FDFVessel<- NA
 Effort$Country<- "Norway"
