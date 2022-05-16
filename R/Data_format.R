@@ -11,15 +11,42 @@ library(sf)
 #### Reading in the data
 Data <- readRDS("dat.RDS")
 
-#### Specifying the data.call requirements
+#### Reading the shapefiles (needed to define nephrops FUs)
+nephrops <- read_sf("data/Nephrops_FU_20160621.shp")
+projection <- st_crs(nephrops)
+world <- st_read("data/ne_10m_land.shp")
+Atlantic <- st_crop(world, c(xmin = -65, ymin = 46, xmax = 32, ymax = 80))
+
+
+#### Specifying the data.call requirements and specific species grouping
 WGMIXFISH_area <- c("27.3.a.20", "27.3.a.21", "27.3.a", "27.3.b.23", "27.3.c.22", "27.3.d.24", "27.3.d.25", "27.3.d.26", "27.3.d.27", "27.3.d.28", "27.3.d.28.1", "27.3.d.28.2", "27.3.d.29", "27.3.d.30", "27.3.d.31", "27.3.d.32", "27.4.a", "27.4.b", "27.4.c", "27.6.a", "27.6.b", "27.7.a", "27.7.b", "27.7.c", "27.7.d", "27.7.e", "27.7.f", "27.7.g", "27.7.h", "27.7.j", "27.7.k", "27.8.a", "27.8.b", "27.8.c", "27.8.d", "27.9.a")
 WGMIXFISH_SKA <- c("RJC","SKA","RAJ","RJA","RJB","RJC","RJE","RJF","RJH","RJI","RJM","RJO","RJR","SKX","SRX")
+WGMIXFISH_SDV <- c("DGS", "DGH", "DGX", "DGZ", "SDV")
 WGMIXFISH_splist <- c("ANF","ANK","BLL","CAA","COD","COE","DAB","FLE","GUG","GUR","HAD","HAL","HER","HKE","HOM","LBD","LEM","LEZ","LIN","MAC","MEG","MON","NEP","NOP","PLE","POK","POL","RJU","SKA","SDV","SOL","SPR","TUR","WHB","WHG","WIT")
 
 #### Now filtering/modifying the data accordingly
+  ### Some data correction
+    Data$ID <- 1:nrow(Data)    
+    (subset(Data, HOVEDART_FAO == "NEP")[which(subset(Data, HOVEDART_FAO == "NEP")$START_LT > 80),])[,c("START_LT", "STOPP_LT")]
+    to_correct <- (subset(Data, HOVEDART_FAO == "NEP")[which(subset(Data, HOVEDART_FAO == "NEP")$START_LT > 80),"ID"])
+    Data[to_correct, "START_LT"] <- Data[to_correct, "START_LT"] - 30
+    
+  ### Now adding the nephrops FUs to the data (only basing it off on the starting lat/lon for simplicity)
+    Data_sf <- Data %>% st_as_sf(crs = 4326, coords = c("START_LG", "START_LT")) %>% st_cast("POINT")
+    nephrops_FU <- as.matrix(st_intersects(Data_sf, nephrops))
+    which_area <- apply(nephrops_FU, 1, function(x) ifelse(TRUE %in% x, which(x == TRUE), NA))
+    Data$nephrops_FU <- paste0("NEP.FU.", nephrops$FU[which_area])
+    Data$nephrops_FU <- ifelse(Data$nephrops_FU == "NEP.FU.NA", paste0("NEP.OUT", Data$area), Data$nephrops_FU)
+    
+    ggplot(nephrops) + geom_sf() + geom_sf(data = Atlantic) +  geom_sf_label(aes(label= FU)) + 
+      geom_point(data =Data %>% filter(HOVEDART_FAO == "NEP"), aes(x=START_LG, y=START_LT)) + 
+      theme_bw()
+        
   ### converting the species code to the one required
     Data <- Data %>% mutate(Species = ifelse(HOVEDART_FAO %in% WGMIXFISH_SKA, "SKA", HOVEDART_FAO),
+                            Species = ifelse(HOVEDART_FAO %in% WGMIXFISH_SDV, "SDV", HOVEDART_FAO),
                    Species = ifelse(Species %in% WGMIXFISH_splist, Species, "OTH"))
+    Data$Species <- ifelse(Data$Species == "NEP", Data$nephrops_FU, Data$Species)
   ### Selecting only the data from the required area
     Data <- Data %>% filter(area %in% WGMIXFISH_area)
   ### Changing names to match the final data call table
@@ -42,13 +69,18 @@ WGMIXFISH_splist <- c("ANF","ANK","BLL","CAA","COD","COE","DAB","FLE","GUG","GUR
 #### verification 1: making sure that each vessel has consistent length info across time
   test <- with(Data, table(RC, VesselLenthCategory, useNA = "always"))
   to_look <- which(apply(cbind(apply(test[,1:3], 1, sum), test[,4]),1,function(x) sum(x>0)) == 2)
-  
+  no_info <- which(apply(cbind(apply(test[,1:3], 1, sum), test[,4]),1,function(x) (x[1]==0 & x[2]>0)) == TRUE)
   test[to_look,]
+  test[no_info,]
   
   Data %>% filter(RC %in% names(to_look)) %>% group_by(RC, FANGSTÅR, STØRSTE_LENGDE) %>% summarize(n=n()) %>% View()
-  
+
   # --> conclusion: we can safely replace all the NA with the corresponding length
 
+  # just FYI: checking why some vessels do not have any length, motor power, info
+  Data %>% filter(RC %in% names(no_info)) %>% group_by(RC,  FANGSTART_FAO) %>% summarize(n=n()) %>% View()
+  Data %>% filter(FANGSTART_FAO %in% "LAH") %>% group_by(RC) %>% summarize(n=n(), catch = sum(RUNDVEKT, na.rm=T)) 
+  
   Data1 <- Data %>% filter(RC %in% names(to_look)) %>% group_by(RC) %>% mutate(STØRSTE_LENGDE = unique(STØRSTE_LENGDE)[!is.na(unique(STØRSTE_LENGDE))])
   Data2 <- Data %>% filter(! RC %in% names(to_look))
   
@@ -58,7 +90,7 @@ WGMIXFISH_splist <- c("ANF","ANK","BLL","CAA","COD","COE","DAB","FLE","GUG","GUR
 Catch <- Data %>% 
   group_by(Species, Year, Quarter, IntercatchMetierTag, VesselLenthCategory, Area) %>%
   dplyr::summarise(
-    Landings = sum(RUNDVEKT1),
+    Landings = sum(RUNDVEKT1, na.rm=T)/1000,
     Value = sum(value),
     value_euro = sum(value_euro)
   )
@@ -67,6 +99,7 @@ Catch$FDFVessel<- NA
 Catch$Discards<- NA
 Catch$Country<- "NO"
 Catch$ID<- 1:nrow(Catch)
+Catch$Quarter <- paste0("Q", Catch$Quarter)
 
 write.csv(Catch, file="output/Catch.csv")
 
@@ -81,6 +114,8 @@ Effort <- Data %>%
   )
 Effort$FDFVessel<- NA
 Effort$Country<- "NO"
-Effort$ID<- 1:nrow(effort)
+Effort$ID<- 1:nrow(Effort)
+Effort$Quarter <- paste0("Q", Effort$Quarter)
+
 write.csv(Effort, file="output/Effort.csv")
 
