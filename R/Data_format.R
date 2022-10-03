@@ -50,23 +50,37 @@ WGMIXFISH_splist <- c("ANF","ANK","BLL","CAA","COD","COE","DAB","FLE","GUG","GUR
   ### Selecting only the data from the required area
     Data <- Data %>% filter(area %in% WGMIXFISH_area)
   ### Changing names to match the final data call table
-    Data <- Data %>% mutate(Date = as.Date(STARTTIDSPUNKT), 
-                            Year = lubridate::year(Date), 
-                            Month = lubridate::month(Date), 
-                            Quarter = lubridate::quarter(Date),
+    Data <- Data %>% mutate(Date_start = as.Date(STARTTIDSPUNKT), 
+                            Date_end = as.Date(STOPPTIDSPUNKT),
+                            Year = FANGSTÅR, 
+                            Month_start = lubridate::month(Date_start), 
+                            Month_end = lubridate::month(Date_end), 
+                            Quarter_start = lubridate::quarter(Date_start),
+                            Quarter_end = lubridate::quarter(Date_end),
                             VesselLenthCategory = cut(STØRSTE_LENGDE, c(10, 24, 40, 10000), right = FALSE),
                             IntercatchMetierTag = metier_level_6,
                             Area = area)
-    ### Create vessel length bins with the required labels 
+    ## Sometimes, info on STARTTIDSPUNKT is missing and we only have STOPPTIDSPUNKT - 
+    ## so in the above we created two version using each and now merging. There are many non-unique but thenm just using the start date as reference (if possible)
+    Data <- Data %>% mutate(Quarter = unique(c(Quarter_start, Quarter_end))[1])
+    Data <- Data %>% mutate(Quarter = Quarter_start)
+    
+    ### Create vessel length bins with the required labels AND completing the data when info is missing
       Data$VesselLenthCategory = ifelse(Data$VesselLenthCategory=="[10,24)", "10<24m", 
                                     ifelse(Data$VesselLenthCategory=="[24,40)", "24<40m", 
                                       ifelse(Data$VesselLenthCategory=="[40,1e+04)", "≥40m", Data$VesselLenthCategory)))
-    ### Creating a few more variables
+      
+      Data$VesselLenthCategory = ifelse((is.na(Data$VesselLenthCategory)  & !is.na(Data$STØRSTE_LENGDE)),
+                                        ifelse(Data$STØRSTE_LENGDE< 24, "10<24m", 
+                                               ifelse((Data$STØRSTE_LENGDE>= 24 & Data$STØRSTE_LENGDE < 40 ), "24<40m", "≥40m")), Data$VesselLenthCategory)
+                                                     
+                                        
+      ### Creating a few more variables
       Data <- Data %>% mutate(duration = as.numeric((strptime(STOPPTIDSPUNKT, format= "%Y-%m-%d %H:%M:%S") - strptime(STARTTIDSPUNKT, format= "%Y-%m-%d %H:%M:%S"))/86400))
       Data <- Data %>% mutate(KWdays = duration * MOTORKRAFT * 0.735499)  # this is converting horse power to kilowatt
 
 
-#### verification 1: making sure that each vessel has consistent length info across time
+#### verification 1: making sure that each vessel has consistent length info across time 
   test <- with(Data, table(RC, VesselLenthCategory, useNA = "always"))
   to_look <- which(apply(cbind(apply(test[,1:3], 1, sum), test[,4]),1,function(x) sum(x>0)) == 2)
   no_info <- which(apply(cbind(apply(test[,1:3], 1, sum), test[,4]),1,function(x) (x[1]==0 & x[2]>0)) == TRUE)
@@ -77,7 +91,7 @@ WGMIXFISH_splist <- c("ANF","ANK","BLL","CAA","COD","COE","DAB","FLE","GUG","GUR
 
   # --> conclusion: we can safely replace all the NA with the corresponding length
 
-  # just FYI: checking why some vessels do not have any length, motor power, info
+  # just FYI: checking why some vessels do not have any length, motor power, info 
   Data %>% filter(RC %in% names(no_info)) %>% group_by(RC,  FANGSTART_FAO) %>% summarize(n=n()) %>% View()
   Data %>% filter(FANGSTART_FAO %in% "LAH") %>% group_by(RC) %>% summarize(n=n(), catch = sum(RUNDVEKT, na.rm=T)) 
   
@@ -85,7 +99,15 @@ WGMIXFISH_splist <- c("ANF","ANK","BLL","CAA","COD","COE","DAB","FLE","GUG","GUR
   Data2 <- Data %>% filter(! RC %in% names(to_look))
   
   Data <- rbind(Data1, Data2)
+
+## Testing if there is any NAs in the above cleaned data. If yes, need further cleaning
+  apply(Data %>% dplyr::select(Species, Year, Quarter, IntercatchMetierTag, VesselLenthCategory, Area), 2, function(x) sum(is.na(x)))
+  View(Data[is.na(Data[,c('VesselLenthCategory')]),c('STØRSTE_LENGDE', 'IntercatchMetierTag', 'VesselLenthCategory', 'BRUTTOTONNASJE', 'MOTORKRAFT')])
+  table(Data[is.na(Data[,c('VesselLenthCategory')]),'RC'])         
   
+  # among other exclude these kelp boats!
+  # Data <- Data %>% filter(RC %in% names(no_info))
+       
 ## Now generating the catch file
 Catch <- Data %>% 
   group_by(Species, Year, Quarter, IntercatchMetierTag, VesselLenthCategory, Area) %>%
@@ -101,7 +123,7 @@ Catch$Country<- "NO"
 Catch$ID<- 1:nrow(Catch)
 Catch$Quarter <- paste0("Q", Catch$Quarter)
 
-write.csv(Catch, file="output/Catch.csv")
+write.csv(Catch, file="output/Catch_new.csv")
 
 
 ## Now generating the Data file
@@ -115,7 +137,9 @@ Effort <- Data %>%
 Effort$FDFVessel<- NA
 Effort$Country<- "NO"
 Effort$ID<- 1:nrow(Effort)
-Effort$Quarter <- paste0("Q", Effort$Quarter)
+# Effort$Quarter1 <- paste("Q", Effort$Quarter, sep="")
+Effort$Quarter <- paste("Q", Effort$Quarter, sep="")
+Effort <- Effort[-which(Effort$Quarter == "QNA"),]
 
-write.csv(Effort, file="output/Effort.csv")
+write.csv(Effort, file="output/Effort_new.csv")
 

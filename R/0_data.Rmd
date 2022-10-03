@@ -1,0 +1,1039 @@
+---
+title: "Loading and processing logbook data"
+output: html_notebook
+---
+
+Modified in April 2022.
+
+# Introduction
+
+Need to split up into three parts on account of data formats
+
+2009-2011: logbook is not electronic
+2011-2015: logbook is electronic, includes target species, but not mesh size
+2015-present: logbook is electronic, target species only in DEP data
+
+This notebook deals with the 2015-present data.
+
+# Prep
+## Generic stuff
+```{r, warning=FALSE}
+DataPath <- "Q:\\ressurs\\mare\\fiskstat\\dagbok\\elFangstdagbok_detaljert_FerdigeÅrEtter2011"
+#see at the bottom for outPath
+
+#year <- 2011
+
+year <- 2015
+#year <- 2016
+#year <- 2017
+#year <- 2018
+#year <- 2019
+#year <- 2020
+#year <- 2021
+
+#install.packages(c("cluster","data.table","doBy","maps","mapdata","maptools","PBSmapping","sp","Matrix","ggplot2")) # answer 'no' to restart R!
+# install vmstools from the downloads folder
+library(vmstools)
+library(chron)
+library(plyr)
+library(lubridate)
+library(data.table)
+library(purrr)
+library(stringr)
+library(dplyr)
+library(sp)
+library(rgdal)
+library(survival) # neardate
+library(readr) # read_delim
+library(openxlsx) # read.xlsx
+library(tidyr)
+library(threadr) # percentage_difference
+for(f in list.files(path=paste0(getwd(), "/R/Functions"), full.names = T)){
+  source(f)
+}
+```
+
+## Get logbook data
+```{r}
+# data from from Daily Catch Report (DCA) from the Q drive
+
+file_list <- list.files("Q:\\ressurs\\mare\\fiskstat\\dagbok\\elFangstdagbok_detaljert_FerdigeÅrEtter2011", full.names = TRUE)
+file_list <- file_list[grep("FDIR", file_list)]
+file_list <- file_list[grep("psv", file_list)]
+
+for (fil in 1:se_along(file_list)){}
+
+d1 <- data.table::fread(file_list[fil])
+  
+
+dim(d1)
+```
+
+## Get data from DEP with info on target species
+```{r}
+d1_1 <-read.csv(file.choose(),                       
+               #dec = ",",
+              #sep = "|",
+              sep = ";",
+              #stringsAsFactors=F
+              #fileEncoding = "iso-8859-1")
+              fileEncoding="UTF-16LE")
+
+dim(d1_1)
+```
+## Get saleslip data
+```{r}
+fangst <-read.csv(file.choose(),                       
+                dec = ",",
+                sep = "|",
+                #sep = ";",
+                #stringsAsFactors=F
+                fileEncoding = "iso-8859-1")
+                #fileEncoding="UTF-16LE")
+
+
+## or
+
+#fangst <- read_delim(file.choose(), "|", escape_double = FALSE, trim_ws = TRUE,
+#                     locale = locale(decimal_mark = ",",encoding = "iso-8859-1"))
+
+verdi <-read.csv(file.choose(),                       
+                        dec = ",",
+                        sep = "|",
+                        #sep = ";",
+                        #stringsAsFactors=F
+                        fileEncoding = "iso-8859-1")
+                        #fileEncoding="UTF-16LE")
+
+fangst_verdi <- merge(fangst, verdi)
+needcols <- c(1,30,58,77,78,79,89, 105,106,107,108,110,115)
+fangst_verdi <- fangst_verdi[,needcols]
+fangst_verdi$LDAT <- as.POSIXct(as.character(fangst_verdi$Landingsdato),format="%d.%m.%Y", tz="UTC")
+
+# the lines below are needed if fun read_delim is used
+#colnames(fangst_verdi) <-gsub(" ", ".", colnames(fangst_verdi))
+#colnames(fangst_verdi) <-gsub("\\(", ".", colnames(fangst_verdi))
+#colnames(fangst_verdi) <-gsub("\\)", ".", colnames(fangst_verdi))
+
+
+#write.csv(fangst_verdi,"sales.csv")
+#data.file <- "/sales.csv"
+#data.path <- getwd()
+#fangst_verdi <-data.table(read.csv(paste0(data.path,data.file),stringsAsFactors = F))
+```
+
+## Re-format logbook data to resemble eflalo2
+```{r}
+
+d1$VE_REF <- d1$RC
+d1$VE_FLT <- NA
+d1$VE_COU <- "NO"
+d1$VE_LEN <- d1$STØRSTE_LENGDE
+d1$VE_KW <- d1$MOTORKRAFT/1.36
+d1$VE_TON <- d1$BRUTTOTONNASJE
+
+d1$FT_REF <- NA
+d1$FT_DCOU <- "NO"
+d1$FT_DHAR <- NA
+
+d1$STARTTIDSPUNKT <- as.POSIXct(d1$STARTTIDSPUNKT,format="%Y-%m-%d %H:%M:%S")
+d1$STOPPTIDSPUNKT <- as.POSIXct(d1$STOPPTIDSPUNKT,format="%Y-%m-%d %H:%M:%S")
+
+# the following fields should contain FT info, but I will use them to store haul (incl. catch) data
+
+d1$FT_DDAT <- lubridate::as_date(d1$STARTTIDSPUNKT)
+d1$FT_DDAT <- format(d1$FT_DDAT, "%d/%m/%Y")
+
+d1$FT_DTIME <- times(format(d1$STARTTIDSPUNKT, "%H:%M:%S"))
+
+d1$FT_LCOU <- "NO"
+
+d1$FT_LHAR <- NA
+
+d1$FT_LDAT <- lubridate::as_date(d1$STOPPTIDSPUNKT)
+d1$FT_LDAT <- format(d1$FT_LDAT, "%d/%m/%Y")
+
+d1$FT_LTIME <- times(format(d1$STOPPTIDSPUNKT, "%H:%M:%S"))
+
+d1$FT_REF <- paste(d1$RC,year(d1$STARTTIDSPUNKT), month(d1$STARTTIDSPUNKT),
+                     day(d1$STARTTIDSPUNKT), hour(d1$STARTTIDSPUNKT),
+                     minute(d1$STARTTIDSPUNKT),as.character(d1$VARIGHET),
+                     sep = "-")
+
+# approximate LE data follows
+
+d1$LE_ID <- row.names(d1)
+d1$LE_CDAT <- lubridate::as_date(d1$STARTTIDSPUNKT)
+d1$LE_STIME <- times(format(d1$STARTTIDSPUNKT, "%H:%M:%S"))
+d1$LE_ETIME <- times(format(d1$STOPPTIDSPUNKT, "%H:%M:%S"))
+d1$LE_SLAT <- d1$START_LT
+d1$LE_SLON <- d1$START_LG
+d1$LE_ELAT <- d1$STOPP_LT
+d1$LE_ELON <- d1$STOPP_LG
+d1$LE_GEAR <- d1$REDSKAP_FAO
+d1$LE_MSZ <- d1$MASKEVIDDE
+d1$LE_RECT <- d1$INT_OMR_NY_STOPP # or should it be the rectangle at the end? or should i over the pol?
+d1$LE_DIV <- NA
+d1$LE_MET <- NA
+
+head(d1)
+```
+
+## Check period
+```{r}
+min(d1$STARTTIDSPUNKT, na.rm=TRUE); max(d1$STARTTIDSPUNKT, na.rm=TRUE)
+```
+
+## How many NAs in the date field?
+```{r}
+length(sum(is.na(d1$STARTTIDSPUNKT)))/dim(d1)[1]
+```
+
+# Fill out metier field
+## Transcode gear
+```{r}
+d2 <- d1
+
+idx1<-which(d2$REDSKAP_FAO=="GEN")
+d2$LE_GEAR[idx1]<-"GNS"
+
+idx2<-which(d2$REDSKAP_FAO=="LL")
+d2$LE_GEAR[idx2]<-"LLS"
+
+idx3<-which(d2$REDSKAP_FAO%in%c("PS1", "PS2"))
+d2$LE_GEAR[idx3]<-"PS"
+
+idx4<-which(d2$REDSKAP_FAO%in%c("OTS", "TB", "TBN", "TBS"))
+d2$LE_GEAR[idx4]<-"OTB"
+
+idx5<-which(d2$REDSKAP_FAO%in%c("TM", "TMS"))
+d2$LE_GEAR[idx5]<-"OTM"
+```
+
+## Adaptation of Josefine's script
+```{r}
+path2fun <- "../../wg_WGSFD/hackathon/VMS-datacall/hackathon_workflow/Subgroup 1/Geno"
+source(file.path(path2fun, "Scripts/Functions.R"))
+
+### Create input data
+input.data <- data.table(Country = d2$VE_COU,
+                         year = year(as.POSIXct(d2$FT_DDAT[1],format="%d/%m/%Y")),
+                         vessel_id = d2$VE_REF,
+                         vessel_length = d2$VE_LEN,
+                         trip_id = d2$FT_REF,
+                         haul_id = d2$LE_ID,
+                         fishing_day = as.character(d2$LE_CDAT),
+                         area = as.character(NA),
+                         ices_rectangle = d2$LE_RECT,
+                         gear = d2$LE_GEAR,
+                         gear_FR = as.character(NA),
+                         mesh = d2$LE_MSZ,
+                         selection = "0",
+                         registered_target_assemblage = as.character(NA),
+                         FAO_species = as.character(NA),
+                         metier_level_6 = as.character(NA),
+                         measure =as.character(NA),
+                         KG = as.numeric(NA),
+                         EUR = as.numeric(NA))
+
+validateInputDataFormat(input.data) # the input needs to be a data.table!
+
+### Load reference lists
+url <- "https://github.com/ices-eg/RCGs/raw/master/Metiers/Reference_lists/AreaRegionLookup.csv"
+area.list <- loadAreaList(url)
+url <- "https://github.com/ices-eg/RCGs/raw/master/Metiers/Reference_lists/Metier%20Subgroup%20Species%202020.xlsx"
+species.list <- loadSpeciesList(url)
+url <- "https://github.com/ices-eg/RCGs/raw/master/Metiers/Reference_lists/RDB_ISSG_Metier_list.csv"
+metier.list <- loadMetierList(url)
+url <- "https://github.com/ices-eg/RCGs/raw/master/Metiers/Reference_lists/Code-ERSGearType-v1.1.xlsx"
+gear.list <- loadGearList(url)
+assemblage.list <- unique(c(species.list$species_group, species.list$dws_group))
+assemblage.list <- assemblage.list[!is.na(assemblage.list)]
+rm(url)
+
+### Input data codes validation
+validateInputDataCodes(input.data, gear.list, area.list, species.list)
+
+#### Assign RCG names to the input data
+##### Get FAO area code for each fishing operation (use centroid)
+lons <- d2 %>% select(LE_SLON, LE_ELON) %>% rowMeans()
+lats <- d2 %>% select(LE_SLAT, LE_ELAT) %>% rowMeans()
+
+d2sp <- SpatialPoints(cbind(lons, lats))
+proj4string(d2sp)=CRS("+init=epsg:4326")
+
+### Get FAO area code
+
+input.data <- input.data %>%
+  ExtractFaoCode(d2sp)
+
+#### Merge by area
+input.data <- merge(input.data, area.list, all.x = T, by = "area")
+
+##### Fill in target species
+depdata <- d1_1
+
+depdata$STARTTIDSPUNKT <- as.POSIXct(depdata$STARTTIDSPUNKT,format="%d.%m.%Y %H:%M:%S")
+depdata$STOPPTIDSPUNKT <- as.POSIXct(depdata$STOPPTIDSPUNKT,format="%d.%m.%Y %H:%M:%S")
+
+# if start point is null, use stop time date and set time to midnight
+
+idx <- which(is.na(depdata$STARTTIDSPUNKT)&!is.na(depdata$STOPPTIDSPUNKT))
+depdata$STARTTIDSPUNKT[idx] <- paste(as.character(date(depdata$STOPPTIDSPUNKT[idx])),"00:00:00", sep = " ")
+depdata$STARTTIDSPUNKT[idx] <- as.POSIXct(depdata$STARTTIDSPUNKT[idx],format="%d.%m.%Y %H:%M:%S")
+depdata$FT_REF <- paste(depdata$RC,year(depdata$STARTTIDSPUNKT), month(depdata$STARTTIDSPUNKT),
+                     day(depdata$STARTTIDSPUNKT), hour(depdata$STARTTIDSPUNKT),
+                     minute(depdata$STARTTIDSPUNKT),as.character(depdata$VARIGHET),
+                     sep = "-")
+
+input.data <- input.data %>%
+  mutate(target_species = depdata$AVGANG_INTENDERT_ART_FAO[match(as.character(d2$FT_REF),as.character(depdata$FT_REF))])%>%
+  mutate(registered_target_assemblage=species.list$species_group[match(target_species,species.list$FAO_species)])
+
+
+
+
+# Assign species category to the input data
+input.data <- merge(input.data, species.list, all.x = T, by = "FAO_species")
+
+# Assign gear group and re-coded gear name to the input data
+input.data<-merge(input.data, gear.list, all.x = T, by.x = "gear", by.y = "gear_code")
+
+input.data$seq_dom_group<-NA
+input.data$selection_type<-NA
+input.data$selection_mesh<-NA
+
+input.data[,c("metier_level_6","metier_level_5"):=pmap_dfr(list(RCG,
+                                                                year,
+                                                                gear_level6, 
+                                                                registered_target_assemblage,
+                                                                seq_dom_group, 
+                                                                mesh, 
+                                                                selection_type,
+                                                                selection_mesh
+                                                                ), getMetier)]
+
+
+length(which(input.data$metier_level_6=="MIS_MIS_0_0_0"))/dim(input.data)[1]
+```
+
+
+## Other fields
+```{r}
+d3 <- d2 %>% left_join(input.data, by = c("LE_ID"="haul_id"))
+
+d3$MESHSIZE <- d3$MASKEVIDDE
+d3$MESHCAT <- NA
+#d3$INTV <- d3$VARIGHET
+
+```
+
+
+# Link to monetary value
+Percent of records where Vessel ID is missing
+```{r}
+
+
+length(which(fangst_verdi$Radiokallesignal..seddel.==""))/dim(fangst_verdi)[1]
+
+```
+
+## sort out class and values in vessel id field
+```{r}
+fangst_verdi$Radiokallesignal..seddel.[which(fangst_verdi$Radiokallesignal..seddel.=="")] <- NA
+fangst_verdi$Radiokallesignal..seddel.[which(fangst_verdi$Radiokallesignal..seddel.==0)] <- NA
+fangst_verdi$Radiokallesignal..seddel. <- ac(fangst_verdi$Radiokallesignal..seddel.)
+fangst_verdi$Landingsdato<-as.POSIXct(as.character(fangst_verdi$Landingsdato),format="%d.%m.%Y", tz="UTC")
+fangst_verdi$landing_datetime <- with(fangst_verdi, paste(Landingsdato, 
+                                                          substr(as.POSIXct(sprintf("%04.0f", Landingsklokkeslett), format='%H%M'), 12, 16), sep = " "))
+fangst_verdi$landing_datetime <- as.POSIXct(fangst_verdi$landing_datetime)
+fangst_verdi$Radiokallesignal..seddel.[which(is.na(fangst_verdi$Radiokallesignal..seddel.))] <- "UNKNOWN"
+fangst_verdi$ID <- as.numeric(rownames(fangst_verdi))
+
+## aggregate by species and day/time: sum weight, mean unit price, sum value
+
+fangst_verdi_agg <- fangst_verdi %>% group_by(landing_datetime, Radiokallesignal..seddel., Art.FAO..kode.) %>%
+  dplyr::summarize(Bruttovekt=sum(Bruttovekt),
+            Produktvekt=sum(Produktvekt),
+            Rundvekt=sum(Rundvekt),
+            Enhetspris.for.kjøper=mean(Enhetspris.for.kjøper),
+            Enhetspris.for.fisker=mean(Enhetspris.for.fisker),
+            Fangstverdi=sum(Fangstverdi))
+
+```
+
+
+## Connect logbook to landings
+most likely selling unit price for the catch
+```{r}
+## Find the closest landing date (and time!) in sales data posterior to catch date (and time!) in logbook data (not working perfectly due to time being ignored by the neardate fun...)
+d4<-d3
+
+data1 <- d4[,c(1,25,45,48,55)]
+data2 <- subset(fangst_verdi_agg, select = c("Art.FAO..kode.",
+                                                        "Radiokallesignal..seddel.",
+                                                        "landing_datetime",
+                                                        "Produktvekt",
+                                             "Enhetspris.for.fisker",
+                                                        "Fangstverdi"))
+#column numbers in 2019 are c(8,3,16,11,12,17)
+
+data1$id <- paste(data1$RC,data1$FANGSTART_FAO, sep="")
+data2$id <- paste(data2$Radiokallesignal..seddel., data2$Art.FAO..kode., sep = "")
+
+data1 <-data1[order(data1$id,data1$STOPPTIDSPUNKT),]
+data2 <-data2[order(data2$id,data2$landing_datetime),]
+
+indx1 <- neardate(data1$id, data2$id, as.Date(data1$STOPPTIDSPUNKT), as.Date(data2$landing_datetime))
+res <- cbind(data.frame(data2[indx1,]),data1)
+colnames(res)[13]<-"id2"
+res
+```
+
+### weight difference between reported caught and reported landed
+the sum of the weights across hauls needs to be not more than x% different to the landed weight which is associated to all those hauls (repeat values)
+```{r}
+w1 <- res %>%
+  group_by(Art.FAO..kode., Radiokallesignal..seddel., landing_datetime) %>%
+  dplyr::summarise(minweight=min(Produktvekt), maxweight = max(Produktvekt),
+            #.groups = c("Art.FAO..kode.", "Radiokallesignal..seddel.", "landing_datetime")
+            ) %>%
+  mutate(check = minweight-maxweight)
+
+w2 <- res %>%
+  group_by(FANGSTART_FAO, Radiokallesignal..seddel., landing_datetime) %>%
+  dplyr::summarize(sumweight=sum(RUNDVEKT), 
+            #.groups = c("FANGSTART_FAO", "Radiokallesignal..seddel.", "landing_datetime")
+            )
+
+wc <- merge(w1,w2, by.x = c("Art.FAO..kode.", "Radiokallesignal..seddel.", "landing_datetime"), by.y=c("FANGSTART_FAO", "Radiokallesignal..seddel.", "landing_datetime"))
+
+pct_diff <- percentage_difference(wc$maxweight, wc$sumweight)
+hist(pct_diff)
+```
+
+### Redistribute landings over hauls
+Equivalent to dispatch over pings. Could potentially use vmstools function
+Two options: sum the value across landing times (just like i did with weights) and then correct *that* using the pct difference. Or correct the weight reported at catch time using the percent difference and multiply *that* times the mean unit price for that species at that landing event. 
+correction: RUNDVEKT + (RUNDVEKT*(pct_diff/100))
+the join is still giving me a few more records than original! why!?
+```{r}
+## sum value over landing event
+
+# is it worth doing this? I can't be bothered
+
+## correct catch to match landing
+
+res <- left_join(res, cbind(wc, pct_diff))
+
+d5 <- left_join(d4, select(res, 
+                           Enhetspris.for.fisker, 
+                           FANGSTART_FAO, 
+                           FT_REF, 
+                           pct_diff, 
+                           STOPPTIDSPUNKT, RUNDVEKT, RC )) %>%
+  mutate(RUNDVEKT1 = case_when(
+    (pct_diff>-50 & pct_diff<50) ~ as.numeric(RUNDVEKT) + (as.numeric(RUNDVEKT)*(pct_diff/100.00))
+    ,
+    TRUE ~ as.numeric(RUNDVEKT)
+    )
+  )
+
+
+```
+
+### how much catch didn't get a value assigned?
+No matchin record found in saleslip, or value field empty for the most part
+```{r}
+length(which(is.na(d5$Enhetspris.for.fisker)))/dim(d5)[1]
+```
+
+### for those where unit price is unknown, get average price for same year, and species
+```{r}
+avpric<-fangst_verdi_agg %>%
+  group_by(Art.FAO..kode.) %>%
+  dplyr::summarize(av_price = mean(Enhetspris.for.fisker, na.rm=TRUE)) %>%
+  filter(Art.FAO..kode.%in%unique(d5$FANGSTART_FAO))
+
+names(avpric$av_price) <- avpric$Art.FAO..kode.
+
+d5$unit_price <- NA
+
+for(i in avpric$Art.FAO..kode.){
+  idx<-which(is.na(d5$Enhetspris.for.fisker)&d5$FANGSTART_FAO==i)
+  d5$unit_price[idx]<-avpric$av_price[i]
+}
+
+```
+
+## Calculate value
+```{r}
+d5 <- d5 %>% mutate(value=case_when(
+  !is.na(unit_price)~RUNDVEKT1*unit_price,
+  !is.na(Enhetspris.for.fisker)~RUNDVEKT1*Enhetspris.for.fisker
+)
+)
+```
+
+## Get exchange rate
+### Option 1, get the exchange rate for the actual sell day (overkill?)
+```{r}
+# # By default return the NOK to EUR rate for today's date 
+# 
+# f2 <- function(base = "NOK", to = "EUR", date = Sys.Date()) {
+#     # Data from https://exchangeratesapi.io (sourced from European Central Bank)
+#     if(length(date) > 1) {
+#         x <- as.Date(date)
+#         src <- URLencode(paste0("https://api.exchangeratesapi.io/history?start_at=", min(x, na.rm = TRUE), "&end_at=", max(x, na.rm = TRUE), "&base=",base))
+#     } else {
+#         src <- paste0("https://api.exchangeratesapi.io/",date,"?base=",base)
+#     }
+# 
+#     parsed = tryCatch({
+#         jsonlite::fromJSON(src)
+#     }, error = function(e) {
+#         return(NA)
+#     })
+# 
+#     # Error checks
+#     if(!is.list(parsed) || length(parsed$rates) < 1) {
+#         warning("Error getting data! Check your input parameter(s).")
+#         return(NA)
+#     }
+# 
+#     if(length(date) > 1) {
+#         tgt <- match(date, names(parsed$rates))
+#         ret <- lapply(tgt, function(x) return(parsed$rates[[x]][[to]]))
+#         ret <- suppressWarnings(as.numeric(as.character(ret)))
+#     } else {
+#         if(parsed$date != date)
+#             warning(paste("Rate from", date , "is not available. Rate from", parsed$date, "is used instead."))
+#         ret <- parsed$rates[[to]]
+#     }
+#     return(as.numeric(ret))
+# }
+# 
+# f2(date = c("2020-01-31", "2020-02-31","2020-01-30", "2020-01-15"))
+# f2(date = c("2020-01-31", "2030-02-31","2020-01-30", "2020-01-15"), base = "USD", to = "NOK")
+# 
+# 
+# #for(i in 1:dim(d5)[1]){
+# #  print(i)
+# #  d5$exrate[i] <- f1(date = d5$Landingsdato[i])
+# #} # this takes way too long
+# 
+# 
+# 
+# # make lookup table of dates and exchange rates
+# 
+# getDays <- function(year){
+#      seq(as.Date(paste(year, "-01-01", sep="")), as.Date(paste(year, "-12-31", sep="")), by="+1 day")
+# }
+# 
+# date_lookup <- data.frame(date=getDays(year), exrate = NA)
+# 
+# for(i in 1:dim(date_lookup)[1]){
+#   print(i)
+#   date_lookup$exrate[i] <- f1(date = date_lookup$date[i])
+# } 
+# 
+# d5$exrate <- date_lookup$exrate[match(d5$Landingsdato,date_lookup$date)]
+
+```
+
+### Option 2, get the mean exchange rate of the last 10 years
+```{r}
+exrate <-mean(
+0.110552,
+0.133735,
+0.12822,
+0.119702,
+0.111943,
+0.107605,
+0.107233,
+0.104102,
+0.101541,
+0.093316,
+0.098127) # https://www.ofx.com/en-au/forex-news/historical-exchange-rates/yearly-average-rates/
+
+d5 <- d5 %>% mutate(value_euro=value*exrate)
+
+```
+
+
+### percent withouth weight data
+```{r}
+nrow(d5[which(is.na(d5$RUNDVEKT)|d5$RUNDVEKT==0),])/nrow(d5)
+```
+
+## Excessive duration
+percent trips longer than 3500 min
+```{r}
+nrow(d5[which(d5$VARIGHET>3500),])/nrow(d5)
+```
+
+## Export results
+```{r}
+#d5 <- subset(d5, d5$VARIGHET<3500)
+
+d5 <- d5 %>% filter(AKTIVITET=="I fiske" & REDSKAP_PROBLEMER=="Ingen")
+
+write.csv(d5,paste0("data_met_value_exrate_", year, ".csv"))
+#data.file <- "/data_met_value_exrate.csv"
+#data.path <- getwd()
+#d5 <-data.table(read.csv(paste0(data.path,data.file),stringsAsFactors = F))
+```
+
+## Make the eflalo table
+```{r}
+d5 <- d5[which(!(is.na(d5$RUNDVEKT))|d5$RUNDVEKT!=0),]
+d5 <- d5[which(!(is.na(d5$Enhetspris.for.fisker))|d5$Enhetspris.for.fisker!=0),]
+#d5 <- d5[-which(d5$metier_level_6=="MIS_MIS_0_0_0"),]
+
+d <- data.frame(VE_REF=d5$VE_REF,
+                VE_FLT=d5$VE_FLT,
+                VE_COU=d5$VE_COU,
+                VE_LEN=d5$VE_LEN,
+                VE_KW=d5$VE_KW,
+                VE_TON=d5$VE_TON,
+                FT_REF=d5$FT_REF,
+                FT_DCOU=d5$FT_DCOU,
+                FT_DHAR=d5$FT_DHAR,
+                FT_DDAT=d5$FT_DDAT,
+                FT_DTIME=d5$FT_DTIME,
+                FT_LCOU=d5$FT_LCOU,
+                FT_LHAR=d5$FT_LHAR,
+                FT_LDAT=d5$FT_LDAT,
+                FT_LTIME=d5$FT_LTIM,
+                LE_ID=d5$LE_ID,
+                LE_CDAT=d5$LE_CDAT,
+                LE_STIME=d5$LE_STIME,
+                LE_ETIME=d5$LE_ETIME,
+                LE_SLAT=d5$LE_SLAT,
+                LE_SLON=d5$LE_SLON,
+                LE_ELAT=d5$LE_ELAT,
+                LE_ELON=d5$LE_ELON,
+                LE_GEAR=d5$LE_GEAR,
+                LE_MSZ=d5$LE_MSZ,
+                #LE_MSZ=NA,
+                LE_RECT=d5$LE_RECT,
+                LE_DIV=d5$LE_DIV,
+                LE_MET=d5$metier_level_6,
+                #LE_KG_TOT=d5$ANKOMST_RUNDVEKT_LEVERING,
+                LE_Species = d5$FANGSTART_FAO,
+                #LE_KG_TOT=d5$RUNDVEKT,
+                #LE_EUR_TOT=d5$Enhetspris.for.kjøper*d5$RUNDVEKT*exrate, #unit = kg!!
+                LE_KG=d5$RUNDVEKT1,
+                LE_EURO=d5$value_euro)
+
+eflalo <- formatEflalo(d) 
+
+agg <- eflalo %>% select(-LE_Species, LE_KG, LE_EURO) %>%
+  group_by(FT_REF) %>%
+  summarise_all(min) %>%
+  select(-contains(c("KG","EUR")))
+
+eflalowide <- d %>% pivot_wider(id_cols = FT_REF, names_from = LE_Species, values_from = c(LE_KG,LE_EURO), values_fn = {sum}) %>%
+  left_join(agg) %>%
+  #mutate(across(all_of(contains("KG")), ac)) %>%
+  #mutate(across(all_of(contains("EUR")), ac)) #%>%
+  data.frame %>% 
+  formatEflalo
+  
+```
+
+# Check the need to use VMS data at all (possible, but worth the effort? I don't know)
+```{r}
+# logbook_start <- SpatialPoints(data.frame(Lon = d$LE_SLON, Lat = d$LE_SLAT))
+# proj4string(logbook_start)=CRS("+init=epsg:4326")
+# 
+# logbook_end <- SpatialPoints(data.frame(Lon = d$LE_ELON, Lat = d$LE_ELAT))
+# proj4string(logbook_end)=CRS("+init=epsg:4326")
+# 
+# writeOGR(SpatialPointsDataFrame(logbook_start,
+#                                 mutate(d, FT_DTIME = ac (FT_DTIME),
+#                                           FT_LTIME = ac(FT_LTIME),
+#                                           LE_STIME = ac(LE_STIME),
+#                                           LE_ETIME = ac(LE_ETIME)))
+#          , dsn = "../2021DataCall/Outputs", layer = "logbook_start_2019",
+#          driver ="ESRI Shapefile",overwrite_layer=TRUE)
+# 
+# writeOGR(SpatialPointsDataFrame(logbook_end,
+#                                 mutate(d, FT_DTIME = ac (FT_DTIME),
+#                                           FT_LTIME = ac(FT_LTIME),
+#                                           LE_STIME = ac(LE_STIME),
+#                                           LE_ETIME = ac(LE_ETIME)))
+#          , dsn = "../2021DataCall/Outputs", layer = "logbook_end_2019",
+#          driver ="ESRI Shapefile",overwrite_layer=TRUE)
+
+
+outPath <- "../../../2022DataCall/Outputs"
+
+save(eflalowide,file=file.path(outPath,paste("eflalo",year,".RData",sep=""))) 
+save(eflalo,file=file.path(outPath,paste("eflalo_long",year,".RData",sep="")))
+
+#write.table(eflalo, file.path(outPath,paste("eflalo",year,".csv",sep="")))
+
+eflalolong <- eflalo
+eflalo <- eflalowide
+```
+
+# Clean Eflalo data
+
+The code below is from "official" workflow
+## Keep track of removed records
+```{r}
+remrecsEflalo <-
+  matrix(
+    NA,
+    nrow = 5, ncol = 2,
+    dimnames =
+      list(
+        c("total", "duplicated", "impossible time", "before 1st Jan", "departArrival"),
+        c("rows", "percentage"))
+  )
+remrecsEflalo["total", ] <- c(nrow(eflalo), "100%")
+```
+
+## Warn for outlying catch records
+I don't understand how this is supposed to work if weight columns are of type character (as they are supposed to be)
+```{r}
+lanThres <- 500000
+
+  # Put eflalo in order of 'non kg/eur' columns, then kg columns, then eur columns
+  idxkg <- grep("LE_KG_", colnames(eflalo))
+  idxeur <- grep("LE_EURO_", colnames(eflalo))
+  idxoth <- which( !(1:ncol(eflalo)) %in% c(idxkg, idxeur) )
+  eflalo <- eflalo[, c(idxoth, idxkg, idxeur)]
+  
+  #First get the species names in your eflalo dataset
+  
+  specs  <-
+    substr(
+      grep("KG", colnames(eflalo), value = TRUE),
+      7, 9
+    )
+  
+  # Define per species what the maximum allowed catch is (larger than that value you expect it to be an error / outlier
+  
+  specBounds <-
+    lapply(
+      as.list(specs),
+      function(x)
+      {
+        specs_cols <- grep(x, colnames(eflalo))
+        idx <-
+          specs_cols[
+            grep("KG", colnames(eflalo)[specs_cols])
+          ]
+        wgh <-
+          sort(
+            unique(
+              eflalo[which(eflalo[, idx] > 0), idx]
+            ))
+        difw <- diff(log10(wgh))
+        ifelse(
+          any(difw > lanThres),
+          wgh[rev( which(difw <= lanThres) + 1)],
+          ifelse(
+            length(wgh) == 0,
+            0,
+            max(wgh, na.rm = TRUE)
+          )
+        )
+      })
+  
+  # Make a list of the species names and the cut-off points / error / outlier point
+  specBounds <- cbind(specs, unlist(specBounds))
+  
+  # Put these values to zero
+  specBounds[which( is.na(specBounds[, 2]) == TRUE), 2] <- "0"
+  
+  # Get the index (column number) of each of the species
+  
+  idx <-
+    unlist(
+      lapply(
+        as.list(specs),
+        function(x)
+        {
+          specs_cols <- grep(x, colnames(eflalo))
+          idx <-
+            specs_cols[
+              grep("KG", colnames(eflalo)[specs_cols])
+            ]
+          idx
+        }
+      ))
+  
+  #If landing > cut-off turn it into an 'NA'
+  
+  warns <- list()
+  fixWarns <- TRUE
+  for (iSpec in idx) {
+    if (
+      length(
+        which(
+          eflalo[, iSpec] >
+          as.numeric(specBounds[(iSpec - idx[1] + 1), 2])
+        )
+      ) > 0)
+    {
+      warns[[iSpec]] <-
+        which(
+          eflalo[, iSpec] >
+            as.numeric(specBounds[(iSpec - idx[1] + 1), 2])
+        )
+      if (fixWarns) {
+        eflalo[
+          which(
+            eflalo[, iSpec] >
+              as.numeric(specBounds[(iSpec - idx[1] + 1), 2])),
+          iSpec
+        ] <- NA
+      }
+    }
+  }
+  
+  save(
+    warns,
+    file = file.path(outPath, paste0("warningsSpecBound", year, ".RData"))
+  )
+  
+  #Turn all other NA's in the eflalo dataset in KG and EURO columns to zero
+  for (i in kgeur(colnames(eflalo))) {
+    eflalo[
+      which(is.na(eflalo[, i]) == TRUE),
+      i] <- 0
+  }
+  
+```
+
+## Remove non-unique trip numbers
+```{r}
+eflalo <-
+  eflalo[
+    !duplicated(paste(eflalo$LE_ID, eflalo$LE_CDAT, sep="-")),
+  ]
+remrecsEflalo["duplicated",] <-
+  c(
+    nrow(eflalo),
+    100 +
+      round(
+        (nrow(eflalo) - as.numeric(remrecsEflalo["total", 1])) /
+          as.numeric(remrecsEflalo["total", 1]) * 100,
+        2)
+  )
+remrecsEflalo
+```
+
+## Remove impossible time stamp records
+```{r}
+eflalo$FT_DDATIM <-
+  as.POSIXct(
+    paste(eflalo$FT_DDAT, eflalo$FT_DTIME, sep = " "),
+    tz = "GMT",
+    format = "%d/%m/%Y  %H:%M")
+eflalo$FT_LDATIM <-
+  as.POSIXct(
+    paste(eflalo$FT_LDAT, eflalo$FT_LTIME, sep = " "),
+    tz = "GMT",
+    format = "%d/%m/%Y  %H:%M")
+
+eflalo <-
+  eflalo[
+    !(is.na(eflalo$FT_DDATIM) | is.na(eflalo$FT_LDATIM)),
+  ]
+remrecsEflalo["impossible time",] <-
+  c(
+    nrow(eflalo),
+    100 +
+      round(
+        (nrow(eflalo) - as.numeric(remrecsEflalo["total", 1])) /
+          as.numeric(remrecsEflalo["total",1]) * 100,
+        2)
+  )
+remrecsEflalo
+```
+
+## Remove trip starting befor 1st Jan
+```{r}
+eflalo <-
+  eflalo[
+    eflalo$FT_DDATIM >=
+      strptime(paste(year,"-01-01 00:00:00",sep=''), "%Y-%m-%d %H:%M"),
+  ]
+remrecsEflalo["before 1st Jan",] <-
+  c(
+    nrow(eflalo),
+    100 +
+      round(
+        (nrow(eflalo) - as.numeric(remrecsEflalo["total",1])) /
+          as.numeric(remrecsEflalo["total", 1]) *
+          100,
+        2)
+  )
+remrecsEflalo
+```
+
+## Remove records with arrival date before departure date
+```{r}
+eflalop <- eflalo
+idx <- which(eflalop$FT_LDATIM >= eflalop$FT_DDATIM)
+eflalo <- eflalo[idx,]
+remrecsEflalo["departArrival", ] <-
+  c(
+    nrow(eflalo),
+    100 +
+      round(
+        (nrow(eflalo) - as.numeric(remrecsEflalo["total", 1])) /
+          as.numeric(remrecsEflalo["total", 1]) *
+          100,
+        2)
+  )
+remrecsEflalo
+```
+
+## Remove trip with overlap with another trip
+```{r}
+library(doBy)
+library(ramify)
+
+eflalo <- orderBy(~ VE_COU + VE_REF + FT_DDATIM + FT_LDATIM, data = eflalo)
+
+overlaps <-
+  lapply(
+    split(eflalo, as.factor(eflalo$VE_REF)),
+    function(x)
+    {
+      x  <- x[!duplicated( paste(x$VE_REF, x$FT_REF)), ]
+      idx <-
+        apply(
+          tril(
+            matrix(
+              as.numeric(
+                outer(x$FT_DDATIM, x$FT_LDATIM, "-")
+              ),
+              nrow = nrow(x), ncol = nrow(x)
+            ),-1),
+          2,
+          function(y) {
+            which(y < 0, arr.ind = TRUE)
+          }
+        )
+      
+      rows <- which(unlist(lapply(idx, length)) > 0) # first part of the overlapping trips
+      if(length(rows)>0){
+        cols = c()
+        
+        for(k in 1:length(rows)){
+          cols <-c(cols, idx[[rows[k]]] ) # second part of the overlapping trips
+        }
+        
+        x[unique(c(rows, cols)),1:15] # returns all the overlapping trips for the given VE_REF
+        #rownames(x[unique(c(rows, cols)),]) # either the line above or this one, not sure which is better
+        
+      }else{
+        data.frame()
+      }
+      
+    })
+
+overlappingTrips = data.frame()
+for (iOver in 1:length(overlaps)) {
+  if (nrow(overlaps[[iOver]]) > 0) { # if there are overlapping trips for the given VE_REF put them all into one file
+    
+    overlappingTrips = rbind(overlappingTrips, overlaps[[iOver]] )      # returns all overlapping trips
+    
+  }
+}
+
+if(nrow(overlappingTrips>0)){
+  
+  print("THERE ARE OVERLAPPING TRIPS IN THE DATASET -> SEE THE FILE overlappingTrip SAVED IN THE RESULTS FOLDER")
+  
+  save(
+    overlappingTrips,
+    file = file.path(outPath, paste0("overlappingTrips", year, ".RData"))
+  )
+}
+```
+
+## Add correct ICES rectangle
+```{r}
+data(ICESareas)
+
+coords<-data.frame(SI_LONG = eflalo$LE_SLON, SI_LATI = eflalo$LE_SLAT) # attention: LE_RECT is from start pos of fishing event
+res <- ICESrectangle(coords)
+coordsEflalo <- ICESrectangle2LonLat( na.omit( unique( res )))
+coordsEflalo$LE_RECT <- na.omit( unique( res ))
+coordsEflalo <-
+  coordsEflalo[
+    is.na( coordsEflalo[, 1] ) == FALSE |
+      is.na( coordsEflalo[, 2] ) == FALSE,
+  ]
+
+eflalo$LE_RECT <- res
+
+# cornerPoints <- list()
+# for(i in 1:nrow(coordsEflalo)) {
+#   cornerPoints[[i]] <-
+#     cbind(
+#       SI_LONG = coordsEflalo[i, "SI_LONG"] + c(0, 0.5, 1, 1, 0),
+#       SI_LATI = coordsEflalo[i, "SI_LATI"] + c(0, 0.25, 0, 0.5, 0.5),
+#       LE_RECT = coordsEflalo[i, "LE_RECT"]
+#     )
+# }
+# 
+# coordsEflalo <-
+#   as.data.frame(
+#     do.call(
+#       rbind,
+#       cornerPoints
+#     ),
+#     stringsAsFactors = FALSE
+#   )
+# coordsEflalo$SI_LONG <- as.numeric(coordsEflalo$SI_LONG)
+# coordsEflalo$SI_LATI <- as.numeric(coordsEflalo$SI_LATI)
+# idxI <-
+#   over(
+#     SpatialPoints(
+#       coordsEflalo[, c("SI_LONG", "SI_LATI")],
+#       CRS(proj4string(ICESareas))),
+#     ICESareas
+#   )
+# eflalo <-
+#   subset(
+#     eflalo,
+#     LE_RECT %in% unique(coordsEflalo[which(idxI > 0), "LE_RECT"])
+#   )
+
+table(eflalo$LE_RECT)
+
+```
+
+
+## Final save
+```{r}
+#   Save the remrecsEflalo file 
+
+save(
+  remrecsEflalo,
+  file = file.path(outPath, paste0("remrecsEflalo", year, ".RData"))
+)
+
+#   Save the cleaned eflalo file 
+
+save(
+  eflalo,
+  file = file.path(outPath,paste0("cleanEflalo",year,".RData"))
+)
+
+save(
+  eflalo,
+  file = file.path("G:\\R_projects\\Fisheries_WGSFD\\WGSFDDataProcessing\\github\\Fisheries_data\\Data",
+                   paste0("cleanEflalo",year,".RData"))
+)
+
+
+```
